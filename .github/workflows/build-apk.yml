@@ -1,0 +1,80 @@
+# ============================================================================
+# DIDIDAIQU Android 客户端云端构建 workflow
+#
+# 仓库布局（repo root）:
+#   App/                              <- Gradle 工程（settings.gradle 所在目录）
+#   .github/workflows/build-apk.yml   <- 本文件
+#
+# 工程说明：
+#   纯 WebView 壳应用，无 native 代码、无第三方依赖。
+#   构建只需要：JDK 17 + Android SDK（platform 34 / build-tools 34.0.0）+ Gradle 8.7
+#
+# 使用方法：
+#   1. push 到 main 自动触发（或 Actions 页手动触发 "Build DIDIDAIQU APK"）
+#   2. 构建产物 dididaiqu-client-debug.zip（含 app-debug.apk）在 Artifacts 下载
+# ============================================================================
+
+name: Build DIDIDAIQU APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'App/**'
+      - '.github/workflows/build-apk.yml'
+
+env:
+  APP_DIR: App   # Gradle 工程根目录（settings.gradle 所在目录）
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform 34 and build-tools 34.0.0
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle (with dependency cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: ${{ env.APP_DIR }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK (package / version / signature / sha256)
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ls -lh "$APK"
+          BT=$ANDROID_HOME/build-tools/34.0.0
+          echo "--- aapt dump badging ---"
+          "$BT/aapt" dump badging "$APK" | grep -E "^(package|launchable-activity|sdkVersion|targetSdkVersion)" || true
+          echo "--- apksigner verify ---"
+          "$BT/apksigner" verify --print-certs "$APK" | head -8 || true
+          echo "--- sha256 ---"
+          sha256sum "$APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dididaiqu-client-debug
+          path: ${{ env.APP_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
